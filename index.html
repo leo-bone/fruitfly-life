@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>真实连接组果蝇一生 · 项目主页</title>
+<style>
+  :root{--bg:#0f1320;--card:#1a2030;--ink:#e8ecf5;--mut:#8b93a7;--acc:#ffd166;--red:#ff6b6b;--grn:#5ad19a;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,"PingFang SC",sans-serif;padding:28px;max-width:920px;margin:0 auto}
+  h1{font-size:24px;margin:0 0 6px}
+  .sub{color:var(--mut);font-size:14px;margin-bottom:22px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:720px){.grid{grid-template-columns:1fr}}
+  a.card{display:block;background:var(--card);border-radius:14px;padding:18px;text-decoration:none;color:var(--ink);border:1px solid #232c44;transition:.15s}
+  a.card:hover{transform:translateY(-3px);border-color:var(--acc)}
+  a.card h2{font-size:16px;margin:0 0 8px;color:var(--acc)}
+  a.card p{font-size:13px;color:var(--mut);margin:0;line-height:1.6}
+  .tag{display:inline-block;font-size:11px;color:var(--mut);border:1px solid #2c3550;border-radius:20px;padding:2px 9px;margin-top:10px}
+  .card2{background:var(--card);border-radius:14px;padding:18px;margin-top:18px}
+  .card2 h2{font-size:15px;margin:0 0 10px;color:var(--acc)}
+  .note{font-size:13px;color:var(--mut);line-height:1.8}
+  .note b{color:var(--ink)}
+  code{background:#0b0f1a;color:#9fe6c4;padding:2px 6px;border-radius:6px;font-size:12px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+  .btn{background:#222c44;color:var(--ink);border:1px solid #2c3550;border-radius:10px;padding:9px 14px;font-size:13px;text-decoration:none}
+</style>
+</head>
+<body>
+  <h1>🪰 真实连接组 · 果蝇的一生</h1>
+  <div class="sub">用 Drosophila MaleCNS v1.0 真实神经接线（5,396 神经元 / 289,144 真实突触边）驱动的模拟科普项目</div>
+
+  <a class="card" href="flylife.html" style="border-color:var(--acc)">
+    <h2>🎬 果蝇的一生 · 可暂停的神经模拟器（主角）</h2>
+    <p>一台电影感的「生命模拟器」：拖时间轴或点播放，观看一只果蝇从卵→幼虫→蛹→成虫→死亡；它<b>此刻的大脑回路随情境真实点亮</b>（真实连接组 9 个功能角色 / 42 种真实神经元），并伴第一人称心理独白与<b>纪录片式中文旁白</b>（可一键开启 AI 配音）。可播放 / 暂停 / 0.5–4× 变速 / 拖拽 / 换一只，随时「暂停思考」照见自己，并把此刻做成<b>可保存、可复制、可分享链接的反思卡片</b>。</p>
+    <span class="tag">可观看 · 可暂停 · 能启发</span>
+  </a>
+
+  <div class="grid">
+    <a class="card" href="collection.html">
+      <h2>📊 多只果蝇「数字一生」合集</h2>
+      <p>16 只真实连接组驱动的果蝇，下拉切换。每张图表与时间轴由真实神经回路结构读出：能量/健康、GF 逃逸、MBON 效价、PAM 奖赏、求偶信号。</p>
+      <span class="tag">自包含 · 可切换</span>
+    </a>
+    <a class="card" href="connectome.html">
+      <h2>🧠 真实连接组网络图</h2>
+      <p>两层：① 10 个功能角色间的真实突触权重连线；② 最强 70 种神经元的力导向枢纽图。所有数值均来自真实边权重。</p>
+      <span class="tag">真实权重 · 可悬停</span>
+    </a>
+  </div>
+
+  <div class="card2">
+    <h2>这个东西有什么用？（先想清楚再玩）</h2>
+    <div class="note">
+      它不是「跑神经网络」，也不是「炒股票」。那 1.1GB 是 FlyEM 联盟发布的<b>果蝇全脑连接组静态接线图</b>（约 10 万神经元、3000 万突触的「布线表」），我拿它当<b>真实结构底座</b>。<br>
+      真正的产品是一台<b>「可暂停的生命模拟器」</b>：你看着一个有真实大脑的微小生命，经历饥饿、欲望、恐惧、求偶、衰老、死亡，它的大脑回路随情境真实点亮，你能随时<b>暂停</b>问自己「换成我呢？」——这是一台<b>共情与自省仪器</b>，不是数据分析玩具。这就是酷，也是意义。
+    </div>
+  </div>
+
+  <div class="card2">
+    <h2>诚实边界（务必先读）</h2>
+    <div class="note">
+      <b>真实的部分：</b>连边权重是 MaleCNS v1.0 连接组的<b>真实突触权重</b>；节点和接线是真实果蝇脑里的真实神经元类型与真实接线。<br>
+      <b>模拟的部分：</b>连接组只是一张「接线图」，不是会思考的大脑。果蝇「一生」的行为与死亡是<b>示意性 rate-based 模型</b>（能量/健康/GF/MBON/PAM/求偶信号随时间变化），不是对真实神经放电的复现；网络图的力导向布局仅为可读性，<b>不代表真实空间位置</b>。<br>
+      <b>定位：</b>这是<b>模拟 / 科普 / 叙事</b>作品——用真实的脑接线结构去讲一只果蝇「可能的一生」，<b>不声称复现意识或真实行为</b>。<br>
+      <b>页面内可查：</b>模拟器右上角有 <code>ⓘ 诚实边界</code> 按钮，随时可复核哪些数字来自真实连接组（5,396 节点 / 289,144 条真实突触连接 / 607 种神经元类型），哪些是示意模型。
+    </div>
+  </div>
+
+  <div class="card2">
+    <h2>怎么分享 / 托管</h2>
+    <div class="note">
+      本主页与子页面都是<b>零外部依赖的自包含 HTML</b>，任意一种方式即可分享：<br>
+      ① 把 <code>flylife.html</code>（或连同 <code>index.html</code> / <code>collection.html</code> / <code>connectome.html</code>）打包发给别人，双击即可打开；<br>
+      ② 本地起服务预览：在 flylife 目录运行 <code>python3 -m http.server 8000</code>，浏览器访问 <code>http://localhost:8000</code>；<br>
+      ③ 丢到任意静态托管（GitHub Pages / Vercel / 对象存储 / 你的服务器）即可拥有在线链接。<br>
+      <b>分享「某一瞬间」：</b>模拟器里点「暂停思考」会把它把当前种子与天数写进网址（如 <code>flylife.html#seed=4828&amp;day=12.3</code>），把这个链接发给别人，对方一打开就停在你分享的那一刻。<br>
+      <b>保存反思卡片：</b>「暂停思考 / 它的一生结束了」弹窗里点「📥 保存卡片」可下载一张 1080×1350 的竖版图片，「📋 复制文字」可复制金句，方便发朋友圈 / 群。
+    </div>
+    <div class="row">
+      <a class="btn" href="flylife.html" style="background:var(--acc);color:#1a1300;border-color:var(--acc)">▶ 打开模拟器</a>
+      <a class="btn" href="collection.html">打开合集</a>
+      <a class="btn" href="connectome.html">打开网络图</a>
+    </div>
+  </div>
+</body></html>

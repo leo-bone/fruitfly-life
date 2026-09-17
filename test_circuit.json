@@ -1,0 +1,19 @@
+{
+  "nodes": {
+    "n_ORN1": "ORN-ab1", "n_ORN2": "ORN-ab2", "n_AL1": "AL-1", "n_AL2": "AL-2",
+    "n_MB_KC1": "KC-a", "n_MB_KC2": "KC-b", "n_MBON1": "MBON-TOGa1", "n_LH1": "LH-A",
+    "n_PAM1": "PAM-01", "n_GF1": "GF", "n_TERG1": "TERG", "n_aCC1": "aCC",
+    "n_P1a": "P1", "n_JCX1": "JCX", "n_Ttm": "Ttm", "n_DLG": "DLG"
+  },
+  "edges": [
+    ["n_ORN1","n_AL1",0.8],["n_ORN2","n_AL2",0.8],
+    ["n_AL1","n_MB_KC1",0.6],["n_AL2","n_MB_KC2",0.6],
+    ["n_MB_KC1","n_MBON1",0.5],["n_MB_KC2","n_MBON1",0.5],
+    ["n_AL1","n_LH1",0.7],["n_AL2","n_LH1",0.7],
+    ["n_LH1","n_MBON1",0.3],
+    ["n_PAM1","n_MB_KC1",0.2],["n_PAM1","n_MB_KC2",0.2],
+    ["n_GF1","n_TERG1",0.9],["n_TERG1","n_Ttm",0.8],["n_Ttm","n_DLG",0.8],
+    ["n_aCC1","n_P1a",0.9],["n_P1a","n_JCX1",0.8],["n_JCX1","n_Ttm",0.3]
+  ],
+  "circuits": ["escape","courtship","olfactory"]
+}

@@ -1,0 +1,830 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+build_flylife.py —— 生成《果蝇的一生 · 可暂停的神经模拟器》flylife.html
+
+核心：把真实果蝇连接组（MaleCNS v1.0）作为大脑底座，
+驱动一个确定性（可拖拽回放）的生命模拟引擎：
+  - 真实角色回路（10 个功能角色 + 真实加权连边）随情境点亮
+  - 第一人称心理独白 + 内部状态条（能量/饥饿/恐惧/欲望/满足…）
+  - 电影感画面（卵→幼虫→蛹→成虫→死亡），可播放/暂停/拖拽/换一只
+  - 人类可观看、暂停、对照、自省
+
+所有神经"活动"是示意性 rate 模型；拓扑与权重是真实的。
+输出：自包含单文件 flylife.html（无外部依赖，老 Mac 可跑）。
+"""
+import json, math, random, os
+from collections import defaultdict, Counter
+from flylife_real import role_of
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+c = json.load(open(os.path.join(HERE, "circuit.json")))
+nodes = c["nodes"]; edges = c["edges"]
+
+ROLE_ORDER = ["sensory_food", "sensory_light", "sensory_wind", "sensory_mate",
+              "reward", "motor_flee", "motor_court", "motor_feed",
+              "motor_approach", "inter"]
+ROLE_CN = {
+    "sensory_food": "嗅觉·觅食", "sensory_light": "视觉·光",
+    "sensory_wind": "风觉·逃逸", "sensory_mate": "配偶听觉",
+    "reward": "奖赏·多巴胺", "motor_flee": "逃逸·巨纤维",
+    "motor_court": "求偶运动", "motor_feed": "取食运动",
+    "motor_approach": "趋近运动", "inter": "中间处理",
+}
+ROLE_COLOR = {
+    "sensory_food": "#5ad19a", "sensory_light": "#ffd166", "sensory_wind": "#56d4ff",
+    "sensory_mate": "#ff9ecf", "reward": "#ff9f43", "motor_flee": "#ff6b6b",
+    "motor_court": "#c792ea", "motor_feed": "#6ea8ff", "motor_approach": "#2fd9c0",
+    "inter": "#8b93a7",
+}
+
+# ---------- 角色层（真实加权连边 + 环形布局） ----------
+role_count = Counter(role_of(t) for t in nodes.values())
+role_edge = defaultdict(float)
+for pre, post, w in edges:
+    rp, ro = role_of(nodes.get(pre, "")), role_of(nodes.get(post, ""))
+    if rp and ro:
+        role_edge[(rp, ro)] += w
+present = [r for r in ROLE_ORDER if role_count.get(r, 0) > 0]
+RAD = 250
+role_pos = {}
+for i, r in enumerate(present):
+    ang = 2 * math.pi * i / len(present) - math.pi / 2
+    role_pos[r] = [round(RAD * math.cos(ang) + RAD + 40, 1),
+                   round(RAD * math.sin(ang) + RAD + 40, 1)]
+role_edges = [{"a": a, "b": b, "w": round(w, 1)}
+              for (a, b), w in role_edge.items()
+              if a in present and b in present and w > 0]
+role_max_w = max((e["w"] for e in role_edges), default=1)
+
+# ---------- 微回路层（最强 42 种神经元 + 真实连边 + 力导向） ----------
+tw = Counter()
+for pre, post, w in edges:
+    tw[nodes.get(pre, "")] += w; tw[nodes.get(post, "")] += w
+top_types = [t for t, _ in tw.most_common(42) if t]
+idx = {t: i for i, t in enumerate(top_types)}
+type_role = {t: role_of(t) for t in top_types}
+type_count = Counter(nodes.values())
+mh_edges = []
+for pre, post, w in edges:
+    if pre in nodes and post in nodes:
+        a, b = nodes[pre], nodes[post]
+        if a in idx and b in idx and a != b:
+            mh_edges.append((idx[a], idx[b], w))
+mh_edges.sort(key=lambda x: x[2], reverse=True)
+mh_edges = mh_edges[:110]
+n = len(top_types)
+random.seed(7)
+pos = [[random.uniform(-1, 1), random.uniform(-1, 1)] for _ in range(n)]
+wmax = max((e[2] for e in mh_edges), default=1)
+k = 1.0 * math.sqrt(4.0 / max(n, 1))
+for it in range(320):
+    disp = [[0.0, 0.0] for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1, n):
+            dx, dy = pos[i][0]-pos[j][0], pos[i][1]-pos[j][1]
+            d = math.hypot(dx, dy) or 0.01
+            rep = k*k/d
+            disp[i][0] += dx/d*rep; disp[i][1] += dy/d*rep
+            disp[j][0] -= dx/d*rep; disp[j][1] -= dy/d*rep
+    for a, b, w in mh_edges:
+        dx, dy = pos[a][0]-pos[b][0], pos[a][1]-pos[b][1]
+        d = math.hypot(dx, dy) or 0.01
+        att = (d*d/k) * (w/wmax)
+        disp[a][0] -= dx/d*att; disp[a][1] -= dy/d*att
+        disp[b][0] += dx/d*att; disp[b][1] += dy/d*att
+    t = max(0.05, 1.0 - it/320) * 0.5
+    for i in range(n):
+        d = math.hypot(disp[i][0], disp[i][1]) or 0.01
+        pos[i][0] += disp[i][0]/d * min(d, t)
+        pos[i][1] += disp[i][1]/d * min(d, t)
+xs = [p[0] for p in pos]; ys = [p[1] for p in pos]
+minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
+VB = 1000
+mh_nodes = []
+for i, t in enumerate(top_types):
+    x = (pos[i][0]-minx)/(maxx-minx or 1)*(VB-90)+45
+    y = (pos[i][1]-miny)/(maxy-miny or 1)*(VB-90)+45
+    mh_nodes.append({"id": i, "t": t, "role": type_role[t], "count": type_count.get(t, 1),
+                     "x": round(x, 1), "y": round(y, 1),
+                     "r": round(4 + 8*math.sqrt(type_count.get(t, 1)/60), 1)})
+mh_edges_out = [{"a": a, "b": b, "w": round(w, 1)} for a, b, w in mh_edges]
+
+# ---------- 三条命名功能回路（真实存在的功能系统） ----------
+circuits_meta = [{"name": x} for x in c.get("circuits", [])]
+
+# ---------- 真实数据规模（用于诚实边界说明） ----------
+src_stats = {"nodes": len(nodes), "edges": len(edges),
+             "types": len(set(nodes.values()))}
+
+BRAIN = {
+    "role": {"present": present, "cn": ROLE_CN, "color": ROLE_COLOR,
+             "count": {r: role_count.get(r, 0) for r in present},
+             "pos": {r: role_pos[r] for r in present}, "edges": role_edges,
+             "maxw": round(role_max_w, 1),
+             "circuits": circuits_meta},
+    "micro": {"nodes": mh_nodes, "edges": mh_edges_out, "color": ROLE_COLOR,
+              "maxw": round(wmax, 1)},
+    "src": src_stats,
+}
+
+TEMPLATE = r"""<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>果蝇的一生 · 可暂停的神经模拟器</title>
+<style>
+  :root{
+    --bg:#070a12; --bg2:#0d1322; --card:rgba(20,28,46,.72); --ink:#eaf0ff;
+    --mut:#8b95ad; --acc:#ffce6b; --teal:#56d4ff; --danger:#ff6b6b; --violet:#c792ea;
+    --ok:#5ad19a; --line:rgba(255,255,255,.08);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:radial-gradient(1200px 800px at 70% -10%, #15203a 0%, var(--bg) 60%);
+    color:var(--ink); font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    overflow:hidden; -webkit-font-smoothing:antialiased;
+  }
+  /* 胶片颗粒 + 暗角 */
+  #grain{position:fixed;inset:0;pointer-events:none;z-index:50;opacity:.05;mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");}
+  #vig{position:fixed;inset:0;pointer-events:none;z-index:49;
+    box-shadow:inset 0 0 240px 40px rgba(0,0,0,.75);}
+  .wrap{position:relative;height:100vh;display:grid;grid-template-rows:auto 1fr auto;gap:10px;padding:14px 16px;z-index:2}
+  header{display:flex;align-items:center;gap:14px}
+  .brand{font-size:15px;font-weight:700;letter-spacing:.5px}
+  .brand b{color:var(--acc)}
+  .tag{font-size:11px;color:var(--mut);border:1px solid var(--line);padding:3px 8px;border-radius:20px}
+  .stage-chip{margin-left:auto;font-size:12px;padding:5px 12px;border-radius:20px;
+    background:rgba(255,206,107,.14);color:var(--acc);border:1px solid rgba(255,206,107,.3)}
+  .clock{font-variant-numeric:tabular-nums;font-size:12px;color:var(--mut)}
+  main{display:grid;grid-template-columns:1.55fr 1fr;gap:14px;min-height:0}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:16px;
+    backdrop-filter:blur(6px);overflow:hidden;position:relative;min-height:0}
+  #sceneWrap{position:relative}
+  #scene{display:block;width:100%;height:100%}
+  .scap{position:absolute;left:14px;bottom:12px;font-size:11px;color:var(--mut);max-width:70%}
+  /* 纪录片旁白字幕 */
+  #narr{position:absolute;left:50%;bottom:50px;transform:translateX(-50%);z-index:8;
+    max-width:80%;text-align:center;font-family:Georgia,"Songti SC","Noto Serif SC",serif;
+    font-size:15px;line-height:1.65;color:#f3f0e6;text-shadow:0 2px 14px rgba(0,0,0,.9);
+    opacity:0;transition:opacity .7s;pointer-events:none;padding:0 14px}
+  #narr.show{opacity:1}
+  .btn.on{background:var(--teal);color:#04121a;border-color:var(--teal);font-weight:700}
+  .right{display:grid;grid-template-rows:auto 1fr auto;gap:12px;min-height:0}
+  .brainbox{position:relative}
+  .brainbox h3,.mindbox h3,.logbox h3{margin:0;font-size:12px;color:var(--acc);font-weight:600;
+    padding:10px 12px 6px;display:flex;justify-content:space-between;align-items:center}
+  .brainbox h3 span,.mindbox h3 span{color:var(--mut);font-weight:400;font-size:10px}
+  #brain{width:100%;height:240px;display:block}
+  .mindbars{padding:4px 12px 10px;display:grid;grid-template-columns:1fr 1fr;gap:7px 14px}
+  .mb{font-size:10px;color:var(--mut);display:flex;align-items:center;gap:6px}
+  .mb i{font-style:normal;width:42px;flex:none}
+  .mb .track{flex:1;height:6px;border-radius:6px;background:rgba(255,255,255,.08);overflow:hidden}
+  .mb .fill{height:100%;width:0;border-radius:6px;transition:width .25s linear}
+  .thought{padding:0 12px 12px;font-family:Georgia,"Songti SC",serif;font-size:14px;line-height:1.7;
+    color:#f3f0e6;min-height:54px}
+  .thought .who{color:var(--acc);font-size:11px;font-family:system-ui;display:block;margin-bottom:3px;letter-spacing:.5px}
+  .logbox .log{padding:2px 12px 12px;font-size:11px;color:var(--mut);line-height:1.7;max-height:120px;overflow:auto}
+  .logbox .log b{color:#cdd6ee;font-weight:600}
+  /* 章节卡 */
+  #chapter{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    pointer-events:none;z-index:5;opacity:0;transition:opacity .8s}
+  #chapter .c1{text-align:center}
+  #chapter .c1 .n{font-size:13px;color:var(--acc);letter-spacing:6px}
+  #chapter .c1 .t{font-size:34px;font-weight:700;margin-top:8px;text-shadow:0 4px 30px rgba(0,0,0,.6)}
+  #chapter .c1 .s{font-size:13px;color:var(--mut);margin-top:8px;font-family:Georgia,serif}
+  /* 控制条 */
+  footer{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);
+    border-radius:14px;padding:10px 14px}
+  .btn{background:rgba(255,255,255,.06);border:1px solid var(--line);color:var(--ink);
+    border-radius:10px;padding:7px 12px;font-size:12px;cursor:pointer;transition:.15s;white-space:nowrap}
+  .btn:hover{background:rgba(255,255,255,.13)}
+  .btn.acc{background:var(--acc);color:#1a1300;border-color:var(--acc);font-weight:700}
+  .btn.acc:hover{filter:brightness(1.08)}
+  .speeds{display:flex;gap:4px}
+  .speeds .btn{padding:6px 9px}
+  .speeds .btn.on{background:var(--teal);color:#04121a;border-color:var(--teal)}
+  #scrub{flex:1;-webkit-appearance:none;height:6px;border-radius:6px;
+    background:linear-gradient(90deg,var(--acc) 0%,var(--acc) var(--p,0%),rgba(255,255,255,.12) var(--p,0%));outline:none;cursor:pointer}
+  #scrub::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;
+    background:#fff;border:3px solid var(--acc);cursor:pointer;box-shadow:0 0 10px rgba(255,206,107,.6)}
+  .ticks{position:relative;height:16px;margin:0 4px}
+  .ticks .tk{position:absolute;top:0;transform:translateX(-50%);font-size:9px;color:var(--mut);white-space:nowrap}
+  .ticks .tk::before{content:"";position:absolute;top:-6px;left:50%;width:1px;height:5px;background:var(--line)}
+  /* 反思卡 */
+  #reflect{position:fixed;inset:0;z-index:60;background:rgba(4,7,14,.82);backdrop-filter:blur(8px);
+    display:none;align-items:center;justify-content:center;padding:24px}
+  #reflect .card{background:linear-gradient(160deg,#16203a,#0c1322);border:1px solid rgba(255,206,107,.3);
+    border-radius:20px;max-width:560px;padding:30px 32px;box-shadow:0 30px 80px rgba(0,0,0,.6)}
+  #reflect h2{margin:0 0 6px;font-size:22px;color:var(--acc)}
+  #reflect .sub{color:var(--mut);font-size:13px;margin-bottom:18px}
+  #reflect p{font-family:Georgia,"Songti SC",serif;font-size:15px;line-height:1.85;color:#eef0f7;margin:0 0 14px}
+  #reflect .q{color:var(--teal);font-weight:600}
+  #reflect .acts{display:flex;gap:10px;margin-top:8px}
+  .hint{font-size:10px;color:var(--mut);text-align:center;margin-top:10px;line-height:1.6}
+  /* 诚实边界 */
+  #bound{position:fixed;inset:0;z-index:61;background:rgba(4,7,14,.82);backdrop-filter:blur(8px);
+    display:none;align-items:center;justify-content:center;padding:24px}
+  #bound .card{background:linear-gradient(160deg,#16203a,#0c1322);border:1px solid rgba(255,206,107,.3);
+    border-radius:20px;max-width:760px;padding:26px 30px;box-shadow:0 30px 80px rgba(0,0,0,.6)}
+  #bound h2{margin:0 0 4px;font-size:20px;color:var(--acc)}
+  #bound .sub{color:var(--mut);font-size:12px;margin-bottom:16px}
+  #bound .cols{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  #bound h4{margin:0 0 8px;font-size:12px;color:var(--teal)}
+  #bound ul{margin:0;padding-left:17px;font-size:12px;color:#cdd6ee;line-height:1.9}
+  #bound ul b{color:#fff}
+  #bound .note{font-size:12px;color:var(--mut);line-height:1.85;margin-top:16px;
+    border-top:1px solid var(--line);padding-top:12px}
+  .cap-b{position:absolute;right:14px;bottom:12px;font-size:10px;color:var(--mut);z-index:6}
+  @media(max-width:920px){main{grid-template-columns:1fr;grid-template-rows:1fr auto}}
+  @media(max-width:720px){#bound .cols{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div id="grain"></div><div id="vig"></div>
+<div class="wrap">
+  <header>
+    <div class="brand">🪰 果蝇的一生 · <b>可暂停的神经模拟器</b></div>
+    <div class="tag">真实连接组驱动 · MaleCNS v1.0</div>
+    <button class="btn" id="boundBtn" style="font-size:11px;padding:4px 10px">ⓘ 诚实边界</button>
+    <div class="clock" id="clock">第 0.0 天</div>
+    <div class="stage-chip" id="stageChip">卵</div>
+  </header>
+
+  <main>
+    <div class="panel" id="sceneWrap">
+      <canvas id="scene"></canvas>
+      <div class="scap" id="scap">拖动下方时间轴，或点播放，观看它的一生。</div>
+      <div class="cap-b">接线拓扑真实 · 神经活动为示意模型（见「诚实边界」）</div>
+      <div id="narr"></div>
+      <div id="chapter"><div class="c1"><div class="n" id="chN"></div><div class="t" id="chT"></div><div class="s" id="chS"></div></div></div>
+    </div>
+
+    <div class="right">
+      <div class="panel brainbox">
+        <h3>🧠 它此刻的大脑 <span id="brainMode">· 功能回路</span></h3>
+        <svg id="brain" viewBox="0 0 540 540"></svg>
+        <div style="display:flex;gap:8px;padding:0 12px 10px"><div class="btn" id="toggleBrain" style="font-size:11px;padding:5px 10px">切换：微回路（真实神经元）</div></div>
+      </div>
+      <div class="panel mindbox">
+        <h3>💭 心理与身体 <span>第一人称独白</span></h3>
+        <div class="mindbars" id="mindbars"></div>
+        <div class="thought" id="thought"><span class="who">它想</span>…</div>
+      </div>
+      <div class="panel logbox">
+        <h3>📓 一生纪事</h3>
+        <div class="log" id="log"></div>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <button class="btn acc" id="play">▶ 播放</button>
+    <div class="speeds" id="speeds">
+      <button class="btn" data-s="0.5">0.5×</button>
+      <button class="btn on" data-s="1">1×</button>
+      <button class="btn" data-s="2">2×</button>
+      <button class="btn" data-s="4">4×</button>
+    </div>
+    <input id="scrub" type="range" min="0" max="1000" value="0">
+    <div class="ticks" id="ticks"></div>
+    <button class="btn" id="voice">🎙 旁白</button>
+    <button class="btn" id="think">⏸ 暂停思考</button>
+    <button class="btn" id="reroll">🎲 换一只</button>
+  </footer>
+</div>
+
+<div id="reflect"><div class="card">
+  <h2 id="rTitle">暂停，想一想</h2>
+  <div class="sub" id="rSub"></div>
+  <div id="rBody"></div>
+  <div class="acts">
+    <button class="btn" id="rCard">📥 保存卡片</button>
+    <button class="btn" id="rCopy">📋 复制文字</button>
+    <button class="btn acc" id="rClose">继续观看</button>
+  </div>
+  <div class="hint">提示：这是一台「共情与自省仪器」。它的大脑回路是真实的，情绪是模型的——你照见的，终究是自己。</div>
+</div></div>
+
+<div id="bound"><div class="card">
+  <h2>诚实边界</h2>
+  <div class="sub">拓扑与权重是真的；活动与剧情是模型。</div>
+  <div class="cols">
+    <div><h4>✅ 真实的部分</h4><ul id="bReal"></ul></div>
+    <div><h4>⚠️ 示意的部分</h4><ul id="bFake"></ul></div>
+  </div>
+  <div class="note" id="bNote"></div>
+  <div class="acts"><button class="btn acc" id="bClose">知道了</button></div>
+</div></div>
+
+<script>
+const B = __BRAIN__;
+const svgNS="http://www.w3.org/2000/svg";
+/* ============ 确定性随机 ============ */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+/* ============ 生命阶段 ============ */
+const ST = [
+  {k:"egg",   name:"卵",   cn:"第一章 · 卵",  s:"在果实的褶皱里，我是一颗等待的细胞。",   f0:0,   f1:0.05},
+  {k:"larva", name:"幼虫", cn:"第二章 · 幼虫",s:"我是一条贪吃的虫，世界就是食物和危险。", f0:0.05,f1:0.20},
+  {k:"pupa",  name:"蛹",   cn:"第三章 · 蛹",  s:"我在黑暗里重组自己，像一场漫长的梦。",   f0:0.20,f1:0.34},
+  {k:"adult", name:"成虫", cn:"第四章 · 成虫",s:"我长出翅膀。世界向我打开，也向我扑来。", f0:0.34,f1:1.0},
+];
+function stageOf(frac){for(const s of ST)if(frac>=s.f0&&frac<s.f1)return s;return ST[ST.length-1];}
+/* ============ 生成一只果蝇的一生日程（确定性） ============ */
+function makeSchedule(seed){
+  const rnd=mulberry32(seed);
+  const lifespan = 38 + Math.floor(rnd()*24);     // 38~61 天
+  const adult0 = lifespan*0.34;
+  const food=[]; let d=adult0+0.5;
+  while(d<lifespan-1){ food.push({day:d, life:rnd()}); d += 1.2 + rnd()*2.2; }
+  const mates=[]; let md=adult0+2;
+  while(md<lifespan-2){ const suc=rnd()>0.35; mates.push({day:md,success:suc,life:rnd()}); md += 3+rnd()*5; }
+  const preds=[]; let pd=adult0+1.5;
+  while(pd<lifespan-0.5){ const esc=rnd()>0.30; preds.push({day:pd,escaped:esc,life:rnd()}); pd += 2.5+rnd()*4.5; }
+  // 死因
+  let deathDay=lifespan, cause="old";
+  const lethal=preds.find(p=>!p.escaped);
+  if(lethal){ deathDay=lethal.day+ (0.3+rnd()*1.2); cause="predator"; }
+  else if(rnd()>0.6){ deathDay=lifespan-1-rnd()*3; cause="sick"; }
+  deathDay=Math.min(deathDay,lifespan);
+  return {seed,lifespan,food,mates,preds,deathDay,cause};
+}
+/* ============ 分享链接：从哈希恢复某一瞬间 ============ */
+function parseHash(){
+  const m=location.hash.match(/seed=(\d+)(?:&day=([\d.]+))?/);
+  if(m){ const S=makeSchedule(+m[1]); let p=0; if(m[2]!=null) p=Math.min(1,(+m[2])/S.lifespan);
+    return {S,p}; }
+  return null;
+}
+/* ============ 核心模拟：状态 = day 的纯函数 ============ */
+function simulate(day, S){
+  const frac = day/S.lifespan;
+  const st = stageOf(frac);
+  const rnd = mulberry32((S.seed*131+Math.floor(day*7))>>>0);
+  // 基础状态
+  let energy=70, hunger=20, arousal=40, fear=0, desire=10, satisfaction=60, sleepiness=10, health=100;
+  const night = 0.5+0.5*Math.cos(2*Math.PI*(day%1)); // 0=夜 1=昼
+  sleepiness = 70*(1-night)+10;
+  arousal = 30+50*night;
+  // 进食事件
+  let feeding=0;
+  for(const f of S.food){ const dd=Math.abs(day-f.day); if(dd<0.6){ const k=1-dd/0.6; feeding=Math.max(feeding,k); } }
+  hunger = Math.max(0, 60 - feeding*70 + (night<0.4?15:0) - 10);
+  energy = Math.min(100, 55 + feeding*45 - (1-night)*8);
+  // 求偶
+  let courting=0, mateJoy=0;
+  for(const m of S.mates){ const dd=Math.abs(day-m.day); if(dd<0.8){const k=1-dd/0.8; courting=Math.max(courting,k); if(m.success&&day>m.day-0.8&&day<m.day+0.5)mateJoy=Math.max(mateJoy,k);} }
+  desire = Math.min(100, 15 + courting*80 + (st.k==="adult"?20:0) - satisfaction*0.3);
+  satisfaction = Math.min(100, 55 + mateJoy*40 + feeding*20 - courting*10);
+  // 捕食
+  let fleeing=0;
+  for(const p of S.preds){ const dd=Math.abs(day-p.day); if(dd<0.35){ const k=1-dd/0.35; fleeing=Math.max(fleeing,k);} }
+  fear = fleeing*100;
+  arousal = Math.max(arousal, fleeing*100);
+  // 衰老/伤病
+  if(frac>0.78){ health = 100 - (frac-0.78)/0.22*55*rnd(); }
+  // 死亡
+  let dead=false, dying=false;
+  if(day>=S.deathDay){ dead=true; }
+  else if(day>S.deathDay-1.0){ dying=true; health=Math.max(0,health-(S.deathDay-day)*40); }
+  if(dead) health=0;
+  // 角色激活（0..1）
+  const act={
+    sensory_food: Math.min(1, feeding*1.1 + (hunger>40?0.4:0)),
+    sensory_light: 0.35+0.5*night,
+    sensory_wind: Math.min(1, fleeing*1.2),
+    sensory_mate: Math.min(1, courting*1.1),
+    reward: Math.min(1, 0.25 + feeding*0.5 + mateJoy*0.7 + (night<0.3?0.3:0)),
+    motor_flee: Math.min(1, fleeing*1.3),
+    motor_court: Math.min(1, courting*1.1),
+    motor_feed: Math.min(1, feeding*1.1),
+    motor_approach: Math.min(1, Math.max(feeding,courting)*0.9),
+    inter: 0.4 + 0.4*Math.max(feeding,courting,fleeing),
+  };
+  if(dead) for(const k in act) act[k]*=0.15;
+  // 心情 / 独白
+  let mood, moodKey;
+  if(dead){ moodKey="dead"; }
+  else if(dying){ moodKey="dying"; }
+  else if(st.k==="egg"){ moodKey="egg"; }
+  else if(st.k==="larva"){ moodKey="larva"; }
+  else if(st.k==="pupa"){ moodKey="pupa"; }
+  else if(fleeing>0.3){ moodKey="flee"; }
+  else if(courting>0.3){ moodKey="court"; }
+  else if(feeding>0.3){ moodKey="feed"; }
+  else if(hunger>50){ moodKey="hungry"; }
+  else if(night<0.35){ moodKey="night"; }
+  else if(frac>0.8){ moodKey="age"; }
+  else { moodKey="calm"; }
+  return {frac,st,energy,hunger,arousal,fear,desire,satisfaction,sleepiness,health,
+          feeding,courting,fleeing,mateJoy,night,act,moodKey,dead,dying,day};
+}
+/* ============ 独白库 ============ */
+const TALK = {
+  egg:["我还只是一团等待。果壳的温度，是我全部的世界。","没有眼睛，没有翅膀，只有分裂的指令在身体里低语。"],
+  larva:["吃。生长。躲。幼虫的哲学就这么简单。","身体在拼命拉长，每一次蜕皮都离飞翔更近一步。","土壤里有危险的气味，我缩了缩——活下去是第一课。"],
+  pupa:["我把自己溶解，再重新拼回。黑暗里，我在变成另一个生命。","翅膀正在我体内折叠成形。这场梦，叫做 metamorphosis。"],
+  hungry:["饿了。风里飘来一丝发酵的甜——那是生存的指南针。","胃在叫。我的嗅觉神经元已经亮起，锁定那颗熟透的果。"],
+  feed:["找到了。我把口器刺进果肉，甜热的汁液灌满身体。","饱。多巴胺在奖赏回路里轻轻炸开，世界暂时安全。"],
+  court:["有同类的气味。我振动翅膀，唱起只有她听得懂的歌。","求偶的冲动涌上来——传下去，这具身体才不算白来。"],
+  flee:["影子！空气骤然流动——巨纤维回路在我脑中炸开，我弹射出去！","逃。没有思考，只有反射。十万神经元的本能，比我快。"],
+  night:["光暗下来，身体变沉。血清素替我盖好被子。","夜。我倒挂栖息，把今天攒下的能量悄悄修复。"],
+  age:["翅膀不再那么轻了。但每一次振翅，仍是我活着的证据。","老了，可欲望还在。这就是生命不肯停下的原因。"],
+  calm:["风很轻，光正好。没有迫在眉睫的死，也没有必须追赶的饿。","此刻平安。对一只果蝇来说，平安就是全部奢侈。"],
+  dying:["身体在漏。伤口的细菌比捕食者更慢，也更确定。","原来结束不是一瞬间，是一段渐渐熄灭的光。"],
+  dead:["……","（它不再想了。但它的连接组，永远留在了人类的数据库里。）"],
+};
+/* 纪录片旁白库（更克制、更"解说"的口吻） */
+const NARR = {
+  egg:["一枚果蝇的卵，落在熟透果实的褶皱里。它还没有意识，只有发育的指令在暗处低语。",
+       "此刻的它，只是一团等待。果壳的温度，就是它全部的世界。"],
+  larva:["孵化成幼虫。它的世界只有两件事：吃，以及——别被吃掉。",
+         "身体在拼命拉长，每一次蜕皮，都离飞翔更近一步。"],
+  pupa:["化蛹。它在自己的体液里溶解，再重组成一个会飞的生命——一场没有记忆的涅槃。",
+        "翅膀正在体内折叠成形。这场漫长的梦，叫做 metamorphosis。"],
+  hungry:["饿了。风里飘来一丝发酵的甜，那是生存的指南针，也是嗅觉神经元的第一行命令。",
+          "胃在叫。它的脑已经锁定那颗熟透的果，身体比意识先一步动身。"],
+  feed:["找到了。口器刺入果肉，甜热的汁液灌满身体——奖赏回路第一次被点亮。",
+        "饱。多巴胺轻轻炸开，对一只果蝇来说，世界暂时安全。"],
+  court:["有同类的气味。它振动翅膀，唱起一首只有对方听得懂的歌。",
+         "求偶不是选择，是刻在神经里的指令。传下去，这具身体才不算白来。"],
+  flee:["捕食者的影子掠过。巨纤维神经元在一毫秒内下达命令：逃。思考，来不及了。",
+        "逃。十万神经元的本能，比它自己快得多。活下来，从来不需要理由。"],
+  night:["光暗下来，身体变沉。某种古老的节律替它盖好被子。",
+         "夜。它倒挂栖息，把今天攒下的能量悄悄修复。"],
+  age:["翅膀不再那么轻了。但每一次振翅，仍是它活着的证据。",
+       "老了，可欲望还在。这大概就是生命不肯停下的原因。"],
+  calm:["风很轻，光正好。没有迫在眉睫的死，也没有必须追赶的饿。",
+        "此刻平安。对一只果蝇来说，平安就是全部的奢侈。"],
+  dying:["身体在漏。伤口的细菌比捕食者更慢，也更确定。",
+         "原来结束不是一瞬间，而是一段渐渐熄灭的光。"],
+  dead:["它的一生停在了这里。可它脑中那张真实的连接图，永远留在了人类的数据库里。",
+        "一只果蝇死了。但 hunger、fear、desire 这套古老语言，仍在你我的身体里运行。"],
+};
+function pick(arr,seed){return arr[Math.floor(mulberry32(seed)()*arr.length)];}
+/* ============ 画布场景 ============ */
+const cv=document.getElementById('scene'), ctx=cv.getContext('2d');
+function resize(){cv.width=cv.clientWidth*2;cv.height=cv.clientHeight*2;}
+window.addEventListener('resize',resize);
+function lerp(a,b,t){return a+(b-a)*t;}
+function drawScene(sim,t){
+  const W=cv.width,H=cv.height; ctx.clearRect(0,0,W,H);
+  const day=sim.day, S=curS;
+  // 天空 / 昼夜
+  const night=sim.night;
+  const g=ctx.createLinearGradient(0,0,0,H);
+  if(sim.st.k==="egg"||sim.st.k==="larva"){ g.addColorStop(0,"#2a1d12");g.addColorStop(1,"#120a06"); }
+  else if(sim.st.k==="pupa"){ g.addColorStop(0,"#161226");g.addColorStop(1,"#070510"); }
+  else { const top=lerp(8,30,night), bot=lerp(18,8,1-night);
+    g.addColorStop(0,`hsl(${210},40%,${top}%)`); g.addColorStop(1,`hsl(${210},45%,${bot}%)`); }
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  // 太阳/月亮
+  const cx=W*0.8, cy=H*(0.18+0.12*(1-night));
+  ctx.beginPath();ctx.arc(cx,cy,lerp(14,26,night),0,7);ctx.fillStyle=night>0.5?"rgba(230,235,255,.9)":"rgba(255,221,120,.95)";ctx.fill();
+  // 地面 / 果实
+  const groundY=H*0.82;
+  if(sim.st.k==="adult"||sim.st.k==="larva"){
+    ctx.fillStyle="rgba(20,40,28,.8)"; ctx.fillRect(0,groundY,W,H-groundY);
+    // 果实
+    const fx=W*0.28, fy=groundY-10, fr=H*0.10;
+    const fg=ctx.createRadialGradient(fx-fr*0.3,fy-fr*0.3,4,fx,fy,fr);
+    fg.addColorStop(0,"#ff8a5b");fg.addColorStop(1,"#a3301c");ctx.fillStyle=fg;
+    ctx.beginPath();ctx.arc(fx,fy,fr,0,7);ctx.fill();
+    ctx.fillStyle="rgba(120,200,120,.7)";ctx.beginPath();ctx.ellipse(fx+fr*0.5,fy-fr*0.9,fr*0.4,fr*0.18,0.6,0,7);ctx.fill();
+  }
+  const wob=Math.sin(t/300);
+  if(sim.st.k==="egg"){
+    // 果实剖面 + 卵
+    const fx=W*0.5, fy=H*0.6, fr=H*0.22;
+    const fg=ctx.createRadialGradient(fx,fy,4,fx,fy,fr);fg.addColorStop(0,"#ff9a66");fg.addColorStop(1,"#7a2412");
+    ctx.fillStyle=fg;ctx.beginPath();ctx.arc(fx,fy,fr,0,7);ctx.fill();
+    ctx.fillStyle="rgba(255,240,210,.95)";ctx.beginPath();ctx.ellipse(fx+wob*4,fy,fr*0.08,fr*0.13,0,0,7);ctx.fill();
+  } else if(sim.st.k==="larva"){
+    const lx=W*0.5+wob*20, ly=H*0.7;
+    ctx.save();ctx.translate(lx,ly);ctx.strokeStyle="#e8d9a0";ctx.lineWidth=22;ctx.lineCap="round";
+    ctx.beginPath();for(let i=0;i<10;i++){const x=-90+i*20;const y=Math.sin(t/200+i)*8; i?ctx.lineTo(x,y):ctx.moveTo(x,y);} ctx.stroke();
+    ctx.fillStyle="#caa86a";ctx.beginPath();ctx.arc(90,Math.sin(t/200+9)*8,12,0,7);ctx.fill();ctx.restore();
+  } else if(sim.st.k==="pupa"){
+    const px=W*0.5, py=H*0.58, pr=H*0.16;
+    const pg=ctx.createLinearGradient(px-pr,py,px+pr,py);pg.addColorStop(0,"#caa0e0");pg.addColorStop(1,"#6a4a8a");
+    ctx.fillStyle=pg;ctx.beginPath();ctx.ellipse(px,py,pr*0.7,pr,0,0,7);ctx.fill();
+    ctx.strokeStyle="rgba(255,255,255,.2)";ctx.lineWidth=2;ctx.stroke();
+    // 内部微光
+    ctx.fillStyle=`rgba(180,220,255,${0.2+0.15*Math.abs(wob)})`;ctx.beginPath();ctx.arc(px,py,pr*0.4,0,7);ctx.fill();
+  } else if(sim.st.k==="adult"){
+    // 成虫飞行
+    const target = sim.fleeing>0.3 ? {x:W*0.7,y:H*0.3} : (sim.feeding>0.3?{x:W*0.28,y:groundY-40}:{x:W*0.5,y:H*0.45});
+    fly.x=lerp(fly.x,target.x+wob*30,0.04); fly.y=lerp(fly.y,target.y+wob*20,0.04);
+    drawFly(fly.x,fly.y,sim,Math.atan2(target.y-fly.y,target.x-fly.x),t);
+    // 捕食者阴影
+    for(const p of S.preds){ if(Math.abs(day-p.day)<0.4){ const a=1-Math.abs(day-p.day)/0.4;
+      ctx.fillStyle=`rgba(0,0,0,${0.5*a})`; ctx.beginPath();ctx.ellipse(W*0.75,fly.y-30,90*a+30,40*a+15,0,0,7);ctx.fill();
+      ctx.fillStyle=`rgba(255,80,80,${0.6*a})`; ctx.font="bold 13px sans-serif";ctx.fillText(p.escaped?"掠过！":"命中！",W*0.7,fly.y-60);} }
+  }
+  if(sim.dead){ ctx.fillStyle="rgba(0,0,0,.45)";ctx.fillRect(0,0,W,H);
+    ctx.fillStyle="rgba(230,230,240,.9)";ctx.font="16px Georgia,serif";ctx.textAlign="center";
+    ctx.fillText("它的一生，在第 "+day.toFixed(1)+" 天结束。",W/2,H*0.5);ctx.textAlign="left"; }
+}
+function drawFly(x,y,sim,ang,t){
+  ctx.save();ctx.translate(x,y);ctx.rotate(ang*0.15);
+  // 翅膀（振翅）
+  const wf=Math.abs(Math.sin(t/40))*0.9+0.1;
+  ctx.fillStyle="rgba(200,225,255,.35)";
+  for(const s of [-1,1]){ ctx.save();ctx.scale(1,s);ctx.beginPath();
+    ctx.ellipse(-6,-14,22,9,-0.5,0,7);ctx.fill();ctx.restore(); }
+  // 身体
+  ctx.fillStyle= sim.fleeing>0.3?"#ff5a5a":"#2a2a33";
+  ctx.beginPath();ctx.ellipse(0,0,16,9,0,0,7);ctx.fill();
+  ctx.fillStyle="#3a3a46";ctx.beginPath();ctx.arc(12,0,7,0,7);ctx.fill();
+  // 头/眼
+  ctx.fillStyle="#111";ctx.beginPath();ctx.arc(18,0,4,0,7);ctx.fill();
+  ctx.restore();
+}
+/* ============ 大脑渲染 ============ */
+const bsvg=document.getElementById('brain');
+let brainMode=0; // 0=role 1=micro
+const rolePos={}; B.role.present.forEach(r=>rolePos[r]=B.role.pos[r]);
+function buildBrain(){
+  bsvg.innerHTML="";
+  const defs=document.createElementNS(svgNS,'defs');
+  defs.innerHTML='<filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>';
+  bsvg.appendChild(defs);
+  if(brainMode===0){
+    const C=270; // 中心 540 视图
+    B.role.edges.forEach(e=>{
+      const a=rolePos[e.a],b=rolePos[e.b]; if(!a||!b)return;
+      const dx=b[0]-a[0],dy=b[1]-a[1],L=Math.hypot(dx,dy)||1;
+      const ux=dx/L,uy=dy/L,o=30;
+      const ln=document.createElementNS(svgNS,'line');
+      ln.setAttribute('x1',a[0]);ln.setAttribute('y1',a[1]);
+      ln.setAttribute('x2',b[0]-ux*o);ln.setAttribute('y2',b[1]-uy*o);
+      ln.setAttribute('stroke',B.role.color[e.a]);ln.setAttribute('stroke-opacity',0.18);
+      ln.setAttribute('stroke-width',1+5*Math.sqrt(e.w/B.role.maxw));
+      ln.dataset.a=e.a;ln.dataset.b=e.b;ln.dataset.base=ln.getAttribute('stroke-opacity');
+      bsvg.appendChild(ln);
+    });
+    B.role.present.forEach(r=>{
+      const p=rolePos[r];const g=document.createElementNS(svgNS,'g');g.dataset.role=r;
+      const c=document.createElementNS(svgNS,'circle');c.setAttribute('cx',p[0]);c.setAttribute('cy',p[1]);c.setAttribute('r',26);
+      c.setAttribute('fill',B.role.color[r]);c.setAttribute('fill-opacity',0.85);c.setAttribute('filter','url(#glow)');
+      g.appendChild(c);
+      const t=document.createElementNS(svgNS,'text');t.setAttribute('x',p[0]);t.setAttribute('y',p[1]+4);
+      t.setAttribute('text-anchor','middle');t.setAttribute('font-size','10');t.setAttribute('font-weight','700');
+      t.setAttribute('fill','#0b0f1a');t.textContent=B.role.cn[r].split('·')[0];g.appendChild(t);
+      const lb=document.createElementNS(svgNS,'text');lb.setAttribute('x',p[0]);lb.setAttribute('y',p[1]+42);
+      lb.setAttribute('text-anchor','middle');lb.setAttribute('font-size','9');lb.setAttribute('fill','#8b95ad');
+      lb.textContent=B.role.count[r]+' 神经元';g.appendChild(lb);
+      bsvg.appendChild(g);
+    });
+  } else {
+    const nodes=B.micro.nodes, edges=B.micro.edges;
+    edges.forEach(e=>{const a=nodes[e.a],b=nodes[e.b];
+      const ln=document.createElementNS(svgNS,'line');ln.setAttribute('x1',a.x*0.54);ln.setAttribute('y1',a.y*0.54);
+      ln.setAttribute('x2',b.x*0.54);ln.setAttribute('y2',b.y*0.54);
+      ln.setAttribute('stroke',B.micro.color[a.role]);ln.setAttribute('stroke-opacity',0.10);
+      ln.setAttribute('stroke-width',0.4+2*Math.sqrt(e.w/B.micro.maxw));
+      ln.dataset.a=e.a;ln.dataset.b=e.b;ln.dataset.ar=a.role;ln.dataset.br=b.role;
+      ln.dataset.base=ln.getAttribute('stroke-opacity');
+      bsvg.appendChild(ln);});
+    nodes.forEach(nd=>{const g=document.createElementNS(svgNS,'g');g.dataset.role=nd.role;g.dataset.id=nd.id;
+      const c=document.createElementNS(svgNS,'circle');c.setAttribute('cx',nd.x*0.54);c.setAttribute('cy',nd.y*0.54);c.setAttribute('r',nd.r*0.7);
+      c.setAttribute('fill',B.micro.color[nd.role]);c.setAttribute('fill-opacity',0.9);c.setAttribute('filter','url(#glow)');
+      g.appendChild(c);
+      const tt=document.createElementNS(svgNS,'title');tt.textContent=nd.t+' · '+B.role.cn[nd.role]+' · '+nd.count+' 个神经元';g.appendChild(tt);
+      bsvg.appendChild(g);});
+  }
+}
+function lightBrain(sim){
+  const act = brainMode===0 ? sim.act : sim.act;
+  if(brainMode===0){
+    bsvg.querySelectorAll('g[data-role]').forEach(g=>{
+      const r=g.dataset.role, a=act[r]||0;
+      const c=g.querySelector('circle');
+      c.setAttribute('fill-opacity',(0.5+0.5*a).toFixed(2));
+      c.setAttribute('r',(22+10*a).toFixed(1));
+    });
+    bsvg.querySelectorAll('line[data-a]').forEach(ln=>{
+      const src=act[ln.dataset.a]||0; const base=parseFloat(ln.dataset.base);
+      ln.setAttribute('stroke-opacity',Math.min(0.95, base+0.7*src).toFixed(2));
+      ln.setAttribute('stroke-width',(parseFloat(ln.getAttribute('stroke-width'))).toFixed(2));
+    });
+  } else {
+    // 微回路：按所在角色激活整体亮度
+    bsvg.querySelectorAll('g[data-role]').forEach(g=>{const a=act[g.dataset.role]||0;
+      g.querySelector('circle').setAttribute('fill-opacity',(0.4+0.6*a).toFixed(2));});
+    bsvg.querySelectorAll('line[data-a]').forEach(ln=>{const a=Math.max(act[ln.dataset.ar]||0,act[ln.dataset.br]||0);
+      ln.setAttribute('stroke-opacity',Math.min(0.9,parseFloat(ln.dataset.base)+0.7*a).toFixed(2));});
+  }
+}
+/* ============ 状态条 ============ */
+const BARS=[["energy","能量","#5ad19a"],["hunger","饥饿","#ff9f43"],["fear","恐惧","#ff6b6b"],
+  ["desire","欲望","#c792ea"],["satisfaction","满足","#56d4ff"],["sleepiness","困倦","#8b93a7"],
+  ["arousal","警觉","#ffd166"],["health","体魄","#ff8a5b"]];
+function buildBars(){const box=document.getElementById('mindbars');box.innerHTML="";
+  BARS.forEach(([k,lab,col])=>{const d=document.createElement('div');d.className='mb';
+    d.innerHTML=`<i>${lab}</i><div class="track"><div class="fill" id="mb_${k}" style="background:${col}"></div></div>`;
+    box.appendChild(d);});}
+function updBars(sim){BARS.forEach(([k])=>{const v=Math.max(0,Math.min(100,sim[k]||0));
+  document.getElementById('mb_'+k).style.width=v.toFixed(0)+'%';});}
+/* ============ 时间轴刻度 ============ */
+function buildTicks(){const tk=document.getElementById('ticks');tk.innerHTML="";
+  ST.forEach(s=>{const el=document.createElement('div');el.className='tk';el.style.left=(s.f0*100)+'%';
+    el.textContent=s.name;tk.appendChild(el);});
+  // 死亡点
+  const dl=document.createElement('div');dl.className='tk';dl.style.left='100%';dl.style.color='var(--danger)';dl.textContent='终';tk.appendChild(dl);}
+/* ============ 章节卡 ============ */
+let lastStage="";
+function showChapter(st){const ch=document.getElementById('chapter');
+  document.getElementById('chN').textContent=st.cn.split(' · ')[0];
+  document.getElementById('chT').textContent=st.cn.split(' · ')[1];
+  document.getElementById('chS').textContent=st.s;
+  ch.style.opacity=1;setTimeout(()=>ch.style.opacity=0,2200);}
+/* ============ 纪事 ============ */
+const logEl=document.getElementById('log'); const logged=new Set();
+function logEvent(day,txt,key){ if(logged.has(key))return; logged.add(key);
+  const d=document.createElement('div');d.innerHTML=`<b>第 ${day.toFixed(1)} 天</b> · ${txt}`;logEl.prepend(d);}
+/* ============ 主循环 ============ */
+let curS=makeSchedule(4828), playing=false, speed=1, fly={x:450,y:300};
+const PLAY_SECONDS=300; // 1× 下整段 ~5 分钟
+let dayPos=0; // 0..1
+function curDay(){return dayPos*curS.lifespan;}
+function setDayPos(p){dayPos=Math.max(0,Math.min(1,p));
+  document.getElementById('scrub').value=Math.round(dayPos*1000);
+  document.getElementById('scrub').style.setProperty('--p',(dayPos*100)+'%');}
+function step(now){
+  if(playing && !refOpen){ dayPos += (1/PLAY_SECONDS)*speed*(1/60);
+    if(dayPos>=1){dayPos=1;playing=false;document.getElementById('play').textContent='↺ 重播';}
+    setDayPos(dayPos); }
+  const day=curDay(); const sim=simulate(day,curS);
+  // 阶段切换
+  if(sim.st.k!==lastStage){ lastStage=sim.st.k; document.getElementById('stageChip').textContent=sim.st.name;
+    if(!scrubbing) showChapter(sim.st); }
+  // HUD
+  document.getElementById('clock').textContent="第 "+day.toFixed(1)+" 天 / 共 "+curS.lifespan+" 天";
+  // 独白
+  const talk=sim.dead?TALK.dead:(TALK[sim.moodKey]||TALK.calm);
+  const line=pick(talk, curS.seed*7+Math.floor(day*3));
+  document.getElementById('thought').innerHTML=`<span class="who">它想（第 ${day.toFixed(1)} 天）</span>${line}`;
+  updBars(sim); lightBrain(sim); drawScene(sim, now); updateNarration(sim);
+  // 纪事
+  for(const f of curS.food) if(Math.abs(day-f.day)<0.15) logEvent(f.day,"闻到发酵果实，前去取食","f"+f.day.toFixed(1));
+  for(const m of curS.mates) if(Math.abs(day-m.day)<0.2) logEvent(m.day,m.success?"求偶成功，完成一次交配":"求偶未果，继续等待","m"+m.day.toFixed(1));
+  for(const p of curS.preds) if(Math.abs(day-p.day)<0.15) logEvent(p.day,p.escaped?"遭遇捕食者，惊险逃脱":"被捕食者击中","p"+p.day.toFixed(1));
+  if(sim.dead && !logged.has('death')){ logged.add('death');
+    const cause = curS.cause==="predator"?"被捕食者所伤、伤口感染":(curS.cause==="sick"?"伤病缠身":"寿终正寝");
+    logEvent(day,"死亡。"+cause,"death");
+    setTimeout(()=>openReflect(true),600); }
+  requestAnimationFrame(step);
+}
+/* ============ 交互 ============ */
+let scrubbing=false;
+const playBtn=document.getElementById('play');
+playBtn.onclick=()=>{ if(dayPos>=1)setDayPos(0); playing=!playing;
+  playBtn.textContent=playing?"⏸ 暂停":"▶ 播放"; if(playing)closeReflect(); else {try{window.speechSynthesis.cancel();}catch(e){}} };
+document.getElementById('speeds').onclick=e=>{const b=e.target.closest('[data-s]');if(!b)return;
+  speed=parseFloat(b.dataset.s);document.querySelectorAll('#speeds .btn').forEach(x=>x.classList.remove('on'));b.classList.add('on');};
+const scrub=document.getElementById('scrub');
+scrub.addEventListener('input',()=>{scrubbing=true;playing=false;playBtn.textContent='▶ 播放';
+  try{window.speechSynthesis.cancel();}catch(e){} setDayPos(scrub.value/1000);});
+scrub.addEventListener('change',()=>{scrubbing=false;});
+document.getElementById('toggleBrain').onclick=()=>{brainMode=brainMode?0:1;
+  document.getElementById('brainMode').textContent=brainMode?"· 微回路（真实神经元）":"· 功能回路";
+  buildBrain();};
+document.getElementById('reroll').onclick=()=>{ const seed=Math.floor(Math.random()*99999);
+  curS=makeSchedule(seed); logged.clear(); logEl.innerHTML=""; lastStage=""; lastNarrKey=""; setDayPos(0);
+  try{window.speechSynthesis.cancel();}catch(e){} playing=true; playBtn.textContent="⏸ 暂停"; };
+document.getElementById('voice').onclick=()=>{ voiceOn=!voiceOn;
+  const b=document.getElementById('voice'); b.classList.toggle('on',voiceOn); b.textContent=voiceOn?'🔊 旁白':'🎙 旁白';
+  if(voiceOn){ const sim=simulate(curDay(),curS); const {txt}=narrText(sim); speak(txt); }
+  else { try{window.speechSynthesis.cancel();}catch(e){} } };
+/* 反思 */
+let refOpen=false;
+function openReflect(isDeath){
+  refOpen=true; const R=document.getElementById('reflect');R.style.display='flex';
+  const day=curDay(),sim=simulate(day,curS);
+  let title,sub,html,text;
+  if(isDeath){
+    title="它的一生结束了";
+    const cause=curS.cause==="predator"?"被捕食者所伤、伤口感染，没能恢复":(curS.cause==="sick"?"伤病一点点拖垮了它":"它活到了自然衰老的尽头");
+    sub=`第 ${day.toFixed(1)} 天 · 死因：${cause}`;
+    html=
+      `<p>一只果蝇，大脑里 <b>${B.src.nodes} 个真实神经元</b>，曾为它点亮过恐惧、欲望、饱足与爱。</p>`+
+      `<p>它的全部剧情，从卵到成虫到死亡，<span class="q">不过几十天</span>。可它每一次振翅求生，都和你在会议室里心跳加速、在深夜里渴望被爱，用的是<span class="q">同一套古老神经语言</span>。</p>`+
+      `<p class="q">你呢？你上一次纯粹为"活着本身"而心动，是什么时候？</p>`;
+    text=`一只果蝇，大脑里 ${B.src.nodes} 个真实神经元，曾为它点亮过恐惧、欲望、饱足与爱。\n它的全部剧情从卵到成虫到死亡，不过几十天。可它每一次振翅求生，都和你在会议室里心跳加速、在深夜里渴望被爱，用的是同一套古老神经语言。\n你呢？你上一次纯粹为\"活着本身\"而心动，是什么时候？`;
+  } else {
+    title="暂停，照一照自己";
+    sub=`第 ${day.toFixed(1)} 天 · 此刻它最强烈的冲动：${moodCn(sim.moodKey)}`;
+    html=
+      `<p>它此刻的大脑里，<b>${moodCn(sim.moodKey)}</b>的回路正在发亮。</p>`+
+      `<p>一只虫子都被 hunger、fear、desire 推着走完一生——<span class="q">你今天是被哪一股冲动推着走的？</span></p>`+
+      `<p class="q">你能否也像现在这样，把自己的"此刻"暂停下来，看清自己在怕什么、想要什么？</p>`;
+    text=`它此刻的大脑里，${moodCn(sim.moodKey)}的回路正在发亮。\n一只虫子都被 hunger、fear、desire 推着走完一生——你今天是被哪一股冲动推着走的？\n你能否也像现在这样，把自己的"此刻"暂停下来，看清自己在怕什么、想要什么？`;
+  }
+  document.getElementById('rTitle').textContent=title;
+  document.getElementById('rSub').textContent=sub;
+  document.getElementById('rBody').innerHTML=html;
+  cardTitle=title; cardSub=sub; cardBody=text;
+  // 分享此刻
+  history.replaceState(null,'','#seed='+curS.seed+'&day='+day.toFixed(1));
+  // 保存卡片
+  document.getElementById('rCard').onclick=()=>{
+    const c=makeCard(cardTitle,cardSub,cardBody,curS.seed);
+    const a=document.createElement('a');a.download='flylife-'+curS.seed+'.png';
+    a.href=c.toDataURL('image/png');a.click();
+  };
+  // 复制文字
+  document.getElementById('rCopy').onclick=()=>{
+    const full=`【${cardTitle}】\n${cardSub}\n\n${cardBody}\n\n—— 🪰 果蝇的一生 · 真实连接组模拟（seed #${curS.seed}）`;
+    const b=document.getElementById('rCopy');const o=b.textContent;
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(full).then(()=>{b.textContent='✓ 已复制';setTimeout(()=>b.textContent=o,1500);},
+        ()=>{b.textContent='请手动复制';setTimeout(()=>b.textContent=o,1500);});
+    } else { b.textContent='请手动复制';setTimeout(()=>b.textContent=o,1500); }
+  };
+}
+function moodCn(k){return {flee:"恐惧·逃逸",court:"求偶·欲望",feed:"饱足·奖赏",hungry:"饥饿·觅食",
+  night:"安眠·修复",age:"衰老·仍渴望",calm:"平安·松弛",dying:"濒死·消散",dead:"终结",egg:"蛰伏·等待",
+  larva:"贪生·生长",pupa:"蜕变·重组"}[k]||"平静";}
+function closeReflect(){refOpen=false;document.getElementById('reflect').style.display='none';}
+document.getElementById('think').onclick=()=>{ if(refOpen)closeReflect(); else {playing=false;playBtn.textContent='▶ 播放';openReflect(false);} };
+document.getElementById('rClose').onclick=closeReflect;
+/* ============ 纪录片旁白 + 配音 ============ */
+let voiceOn=false, lastNarrKey="";
+function narrText(sim){
+  const key = sim.dead?"dead":(sim.dying?"dying":sim.moodKey);
+  const arr = NARR[key]||NARR.calm;
+  return {key, txt: pick(arr, curS.seed*13+Math.floor(sim.day*2))};
+}
+function speak(text){
+  if(!voiceOn) return;
+  try{ const u=new SpeechSynthesisUtterance(text); u.lang='zh-CN'; u.rate=0.96; u.pitch=1;
+    const vs=window.speechSynthesis.getVoices();
+    const v=vs.find(x=>/zh|cmn|Chinese/i.test(x.lang+' '+x.name));
+    if(v)u.voice=v;
+    window.speechSynthesis.cancel(); window.speechSynthesis.speak(u);
+  }catch(e){}
+}
+function updateNarration(sim){
+  const el=document.getElementById('narr'); const {key,txt}=narrText(sim);
+  if(key!==lastNarrKey){ lastNarrKey=key; el.textContent=txt; el.classList.add('show');
+    if(voiceOn && playing) speak(txt);
+    clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('show'),4600);
+  }
+}
+/* ============ 可分享反思卡片 ============ */
+let cardTitle="",cardSub="",cardBody="";
+function wrapText(x,text,maxW){const lines=[];let line="";
+  for(const ch of text){const test=line+ch;
+    if(x.measureText(test).width>maxW&&line){lines.push(line);line=ch;}else line=test;}
+  if(line)lines.push(line);return lines;}
+function makeCard(title,sub,body,seed){
+  const W=1080,H=1350,c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');
+  const g=x.createLinearGradient(0,0,0,H);g.addColorStop(0,'#16203a');g.addColorStop(1,'#070a12');
+  x.fillStyle=g;x.fillRect(0,0,W,H);
+  x.fillStyle='rgba(255,206,107,.9)';x.fillRect(80,120,64,7);
+  x.fillStyle='#ffce6b';x.font='bold 58px -apple-system,"PingFang SC","Microsoft YaHei",sans-serif';x.fillText(title,80,178);
+  x.fillStyle='#8b95ad';x.font='28px -apple-system,"PingFang SC",sans-serif';x.fillText(sub,80,228);
+  x.fillStyle='#eef0f7';x.font='34px Georgia,"Songti SC","Noto Serif SC",serif';
+  const lines=[];body.split('\n').forEach(p=>{wrapText(x,p,W-160).forEach(l=>lines.push(l));lines.push('');});
+  let y=312;lines.forEach(l=>{x.fillText(l,80,y);y+=54;});
+  x.fillStyle='#ffce6b';x.font='30px sans-serif';x.fillText('🪰 果蝇的一生 · 真实连接组模拟',80,H-96);
+  x.fillStyle='#8b95ad';x.font='24px sans-serif';x.fillText('seed #'+seed+' · 一只虫子被 hunger/fear/desire 推着走完一生——你呢？',80,H-54);
+  return c;
+}
+/* ============ 启动 ============ */
+document.getElementById('brainMode').textContent="· 功能回路";
+buildBrain(); buildBars(); buildTicks(); resize();
+const _hs=parseHash();
+if(_hs){ curS=_hs.S; dayPos=_hs.p; }
+setDayPos(dayPos);
+/* 诚实边界：用真实统计数字填充，不写空话 */
+document.getElementById('bReal').innerHTML=[
+  '接线来自公开数据集 <b>MaleCNS v1.0</b>——FlyEM 联盟发布的成年雄性果蝇中枢神经系统连接组。',
+  '本页底图共 <b>'+B.src.nodes+' 个神经元节点、'+B.src.edges+' 条真实突触连接</b>，取自 <b>'+B.src.types+' 种真实神经元类型</b>。',
+  '大脑图里的节点是<b>真实神经元类型</b>，连线粗细对应<b>真实突触权重</b>（真实突触计数之和）。'
+].map(s=>'<li>'+s+'</li>').join('');
+document.getElementById('bFake').innerHTML=[
+  '这只果蝇<b>「的一生」是程序生成的示意叙事</b>——何时觅食、求偶、遇险、死于什么，不是某只真实果蝇的记录。',
+  '脑区<b>「点亮」的强度</b>，以及能量 / 饥饿 / 恐惧 / 欲望等状态，是 <b>rate-based 简化模型</b>，不是对真实神经放电的复现。',
+  '图的<b>布局（环形 / 力导向）只为可读性</b>，不代表神经元在脑中的真实空间位置。'
+].map(s=>'<li>'+s+'</li>').join('');
+document.getElementById('bNote').innerHTML='结论：这是一件 <b>模拟 / 科普 / 自省</b> 作品——用真实的脑接线结构去讲一只果蝇「可能的一生」，<b>不声称复现意识或真实行为</b>。它的价值不在预测，而在让你照见自己。';
+document.getElementById('boundBtn').onclick=()=>{document.getElementById('bound').style.display='flex';};
+document.getElementById('bClose').onclick=()=>{document.getElementById('bound').style.display='none';};
+requestAnimationFrame(step);
+</script>
+</body></html>
+"""
+
+out = os.path.join(HERE, "flylife.html")
+html = TEMPLATE.replace("__BRAIN__", json.dumps(BRAIN, ensure_ascii=False))
+with open(out, "w", encoding="utf-8") as fp:
+    fp.write(html)
+print("模拟器已生成：", out, "大小：", os.path.getsize(out), "字节")
+print("角色层：", len(BRAIN["role"]["present"]), "节点 /", len(BRAIN["role"]["edges"]), "真实连边")
+print("微回路：", len(BRAIN["micro"]["nodes"]), "真实神经元 /", len(BRAIN["micro"]["edges"]), "真实连边")
+print("命名回路：", [c["name"] for c in BRAIN["role"]["circuits"]])

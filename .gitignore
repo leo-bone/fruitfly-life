@@ -1,0 +1,12 @@
+# 本地依赖与缓存（不入库）
+.pylibs/
+.pylibs311/
+__pycache__/
+*.pyc
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 原始大体积权重表（1.1GB，按需自行下载，仓库仅含抽取后的 circuit.json）
+connectome-weights-male-cns-v1.0-minconf-0.5.feather
