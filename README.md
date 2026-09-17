@@ -22,10 +22,9 @@
 
 仓库里的 `flylife.html`、`index.html`、`collection.html`、`connectome.html` 都是**零外部依赖的自包含单文件**，直接双击用浏览器打开即可。建议从 `index.html` 进入。
 
-也可以本地起一个服务预览：
+在本仓库根目录起一个本地服务预览：
 
 ```bash
-cd flylife-publish
 python3 -m http.server 8000
 # 浏览器访问 http://localhost:8000
 ```
