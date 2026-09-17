@@ -71,3 +71,12 @@ https://storage.googleapis.com/flyem-male-cns/）抽取而来；仓库已内置�
 ## License
 
 MIT © leo-bone
+
+## 🎬 视频演示（5 分钟，含合成配乐与中文字幕）
+
+下面是完整一生的录屏：一只果蝇由真实连接组驱动，从卵 → 幼虫 → 蛹 → 成虫 → 死亡，
+结尾定格在「约 16 万个真实神经元（完整 MaleCNS v1.0 连接组 166,700 个）」反思卡。
+
+![果蝇的一生 5 分钟演示](media/flylife-life-5min.mp4)
+
+▶ 也可直接在仓库里下载观看：[media/flylife-life-5min.mp4](media/flylife-life-5min.mp4)
