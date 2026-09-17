@@ -116,6 +116,9 @@ circuits_meta = [{"name": x} for x in c.get("circuits", [])]
 # ---------- 真实数据规模（用于诚实边界说明） ----------
 src_stats = {"nodes": len(nodes), "edges": len(edges),
              "types": len(set(nodes.values()))}
+# 完整 MaleCNS v1.0 雄性果蝇全中枢连接组（Berg et al., Cell, 2026-09-03）——真实全脑规模
+# 用于死亡反思卡与「诚实边界」：5,396 是提取并点亮的功能子网络，166,700 才是完整连接组
+full_stats = {"neurons": 166700, "synapses": 125000000, "types": 11710}
 
 BRAIN = {
     "role": {"present": present, "cn": ROLE_CN, "color": ROLE_COLOR,
@@ -126,6 +129,7 @@ BRAIN = {
     "micro": {"nodes": mh_nodes, "edges": mh_edges_out, "color": ROLE_COLOR,
               "maxw": round(wmax, 1)},
     "src": src_stats,
+    "full": full_stats,
 }
 
 TEMPLATE = r"""<!doctype html>
@@ -363,7 +367,6 @@ function parseHash(){
 function simulate(day, S){
   const frac = day/S.lifespan;
   const st = stageOf(frac);
-  const rnd = mulberry32((S.seed*131+Math.floor(day*7))>>>0);
   // 基础状态
   let energy=70, hunger=20, arousal=40, fear=0, desire=10, satisfaction=60, sleepiness=10, health=100;
   const night = 0.5+0.5*Math.cos(2*Math.PI*(day%1)); // 0=夜 1=昼
@@ -384,8 +387,9 @@ function simulate(day, S){
   for(const p of S.preds){ const dd=Math.abs(day-p.day); if(dd<0.35){ const k=1-dd/0.35; fleeing=Math.max(fleeing,k);} }
   fear = fleeing*100;
   arousal = Math.max(arousal, fleeing*100);
-  // 衰老/伤病
-  if(frac>0.78){ health = 100 - (frac-0.78)/0.22*55*rnd(); }
+  // 衰老/伤病：平滑、确定性下降（去掉逐帧随机抖动，避免体魄条乱跳）
+  // 每只果蝇的衰退斜率略有不同（由 seed 决定），但整体单调递减
+  if(frac>0.78){ const decl=(frac-0.78)/0.22; health = 100 - decl*(50 + 12*((S.seed%17)/17)); }
   // 死亡
   let dead=false, dying=false;
   if(day>=S.deathDay){ dead=true; }
@@ -430,7 +434,7 @@ const TALK = {
   hungry:["饿了。风里飘来一丝发酵的甜——那是生存的指南针。","胃在叫。我的嗅觉神经元已经亮起，锁定那颗熟透的果。"],
   feed:["找到了。我把口器刺进果肉，甜热的汁液灌满身体。","饱。多巴胺在奖赏回路里轻轻炸开，世界暂时安全。"],
   court:["有同类的气味。我振动翅膀，唱起只有她听得懂的歌。","求偶的冲动涌上来——传下去，这具身体才不算白来。"],
-  flee:["影子！空气骤然流动——巨纤维回路在我脑中炸开，我弹射出去！","逃。没有思考，只有反射。十万神经元的本能，比我快。"],
+  flee:["影子！空气骤然流动——巨纤维回路在我脑中炸开，我弹射出去！","逃。没有思考，只有反射。十六万神经元的本能，比我快。"],
   night:["光暗下来，身体变沉。血清素替我盖好被子。","夜。我倒挂栖息，把今天攒下的能量悄悄修复。"],
   age:["翅膀不再那么轻了。但每一次振翅，仍是我活着的证据。","老了，可欲望还在。这就是生命不肯停下的原因。"],
   calm:["风很轻，光正好。没有迫在眉睫的死，也没有必须追赶的饿。","此刻平安。对一只果蝇来说，平安就是全部奢侈。"],
@@ -452,7 +456,7 @@ const NARR = {
   court:["有同类的气味。它振动翅膀，唱起一首只有对方听得懂的歌。",
          "求偶不是选择，是刻在神经里的指令。传下去，这具身体才不算白来。"],
   flee:["捕食者的影子掠过。巨纤维神经元在一毫秒内下达命令：逃。思考，来不及了。",
-        "逃。十万神经元的本能，比它自己快得多。活下来，从来不需要理由。"],
+        "逃。十六万神经元的本能，比它自己快得多。活下来，从来不需要理由。"],
   night:["光暗下来，身体变沉。某种古老的节律替它盖好被子。",
          "夜。它倒挂栖息，把今天攒下的能量悄悄修复。"],
   age:["翅膀不再那么轻了。但每一次振翅，仍是它活着的证据。",
@@ -469,6 +473,7 @@ function pick(arr,seed){return arr[Math.floor(mulberry32(seed)()*arr.length)];}
 const cv=document.getElementById('scene'), ctx=cv.getContext('2d');
 function resize(){cv.width=cv.clientWidth*2;cv.height=cv.clientHeight*2;}
 window.addEventListener('resize',resize);
+if(window.ResizeObserver){ try{ new ResizeObserver(resize).observe(cv); }catch(e){} }
 function lerp(a,b,t){return a+(b-a)*t;}
 function drawScene(sim,t){
   const W=cv.width,H=cv.height; ctx.clearRect(0,0,W,H);
@@ -481,9 +486,9 @@ function drawScene(sim,t){
   else { const top=lerp(8,30,night), bot=lerp(18,8,1-night);
     g.addColorStop(0,`hsl(${210},40%,${top}%)`); g.addColorStop(1,`hsl(${210},45%,${bot}%)`); }
   ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
-  // 太阳/月亮
+  // 太阳/月亮（night: 1=昼 0=夜，昼显太阳、夜显月亮）
   const cx=W*0.8, cy=H*(0.18+0.12*(1-night));
-  ctx.beginPath();ctx.arc(cx,cy,lerp(14,26,night),0,7);ctx.fillStyle=night>0.5?"rgba(230,235,255,.9)":"rgba(255,221,120,.95)";ctx.fill();
+  ctx.beginPath();ctx.arc(cx,cy,lerp(14,26,night),0,7);ctx.fillStyle=night>0.5?"rgba(255,221,120,.95)":"rgba(230,235,255,.9)";ctx.fill();
   // 地面 / 果实
   const groundY=H*0.82;
   if(sim.st.k==="adult"||sim.st.k==="larva"){
@@ -564,6 +569,7 @@ function buildBrain(){
       ln.setAttribute('stroke',B.role.color[e.a]);ln.setAttribute('stroke-opacity',0.18);
       ln.setAttribute('stroke-width',1+5*Math.sqrt(e.w/B.role.maxw));
       ln.dataset.a=e.a;ln.dataset.b=e.b;ln.dataset.base=ln.getAttribute('stroke-opacity');
+      ln.dataset.basew=ln.getAttribute('stroke-width');
       bsvg.appendChild(ln);
     });
     B.role.present.forEach(r=>{
@@ -608,8 +614,9 @@ function lightBrain(sim){
     });
     bsvg.querySelectorAll('line[data-a]').forEach(ln=>{
       const src=act[ln.dataset.a]||0; const base=parseFloat(ln.dataset.base);
+      const basew=parseFloat(ln.dataset.basew||ln.getAttribute('stroke-width'));
       ln.setAttribute('stroke-opacity',Math.min(0.95, base+0.7*src).toFixed(2));
-      ln.setAttribute('stroke-width',(parseFloat(ln.getAttribute('stroke-width'))).toFixed(2));
+      ln.setAttribute('stroke-width',(basew + 3.2*src).toFixed(2));
     });
   } else {
     // 微回路：按所在角色激活整体亮度
@@ -649,13 +656,13 @@ function logEvent(day,txt,key){ if(logged.has(key))return; logged.add(key);
 /* ============ 主循环 ============ */
 let curS=makeSchedule(4828), playing=false, speed=1, fly={x:450,y:300};
 const PLAY_SECONDS=300; // 1× 下整段 ~5 分钟
-let dayPos=0; // 0..1
+let dayPos=0, lastNow=0; // 0..1（lastNow 用于按真实时间推进，帧率无关）
 function curDay(){return dayPos*curS.lifespan;}
 function setDayPos(p){dayPos=Math.max(0,Math.min(1,p));
   document.getElementById('scrub').value=Math.round(dayPos*1000);
   document.getElementById('scrub').style.setProperty('--p',(dayPos*100)+'%');}
 function step(now){
-  if(playing && !refOpen){ dayPos += (1/PLAY_SECONDS)*speed*(1/60);
+  if(playing && !refOpen){ const dt=Math.min(0.2,(now-(lastNow||now))/1000); dayPos += dt*speed/PLAY_SECONDS; lastNow=now;
     if(dayPos>=1){dayPos=1;playing=false;document.getElementById('play').textContent='↺ 重播';}
     setDayPos(dayPos); }
   const day=curDay(); const sim=simulate(day,curS);
@@ -695,6 +702,7 @@ document.getElementById('toggleBrain').onclick=()=>{brainMode=brainMode?0:1;
   buildBrain();};
 document.getElementById('reroll').onclick=()=>{ const seed=Math.floor(Math.random()*99999);
   curS=makeSchedule(seed); logged.clear(); logEl.innerHTML=""; lastStage=""; lastNarrKey=""; setDayPos(0);
+  closeReflect();
   try{window.speechSynthesis.cancel();}catch(e){} playing=true; playBtn.textContent="⏸ 暂停"; };
 document.getElementById('voice').onclick=()=>{ voiceOn=!voiceOn;
   const b=document.getElementById('voice'); b.classList.toggle('on',voiceOn); b.textContent=voiceOn?'🔊 旁白':'🎙 旁白';
@@ -711,10 +719,10 @@ function openReflect(isDeath){
     const cause=curS.cause==="predator"?"被捕食者所伤、伤口感染，没能恢复":(curS.cause==="sick"?"伤病一点点拖垮了它":"它活到了自然衰老的尽头");
     sub=`第 ${day.toFixed(1)} 天 · 死因：${cause}`;
     html=
-      `<p>一只果蝇，大脑里 <b>${B.src.nodes} 个真实神经元</b>，曾为它点亮过恐惧、欲望、饱足与爱。</p>`+
+      `<p>一只果蝇，大脑里 <b>约 16 万个真实神经元</b>（完整 MaleCNS v1.0 连接组 166,700 个），曾为它点亮过恐惧、欲望、饱足与爱。</p>`+
       `<p>它的全部剧情，从卵到成虫到死亡，<span class="q">不过几十天</span>。可它每一次振翅求生，都和你在会议室里心跳加速、在深夜里渴望被爱，用的是<span class="q">同一套古老神经语言</span>。</p>`+
       `<p class="q">你呢？你上一次纯粹为"活着本身"而心动，是什么时候？</p>`;
-    text=`一只果蝇，大脑里 ${B.src.nodes} 个真实神经元，曾为它点亮过恐惧、欲望、饱足与爱。\n它的全部剧情从卵到成虫到死亡，不过几十天。可它每一次振翅求生，都和你在会议室里心跳加速、在深夜里渴望被爱，用的是同一套古老神经语言。\n你呢？你上一次纯粹为\"活着本身\"而心动，是什么时候？`;
+    text=`一只果蝇，大脑里约 16 万个真实神经元（完整 MaleCNS v1.0 连接组 166,700 个），曾为它点亮过恐惧、欲望、饱足与爱。\n它的全部剧情从卵到成虫到死亡，不过几十天。可它每一次振翅求生，都和你在会议室里心跳加速、在深夜里渴望被爱，用的是同一套古老神经语言。\n你呢？你上一次纯粹为\"活着本身\"而心动，是什么时候？`;
   } else {
     title="暂停，照一照自己";
     sub=`第 ${day.toFixed(1)} 天 · 此刻它最强烈的冲动：${moodCn(sim.moodKey)}`;
@@ -754,6 +762,10 @@ document.getElementById('think').onclick=()=>{ if(refOpen)closeReflect(); else {
 document.getElementById('rClose').onclick=closeReflect;
 /* ============ 纪录片旁白 + 配音 ============ */
 let voiceOn=false, lastNarrKey="";
+let cachedVoices=[];
+function refreshVoices(){ try{ cachedVoices=window.speechSynthesis.getVoices()||[]; }catch(e){ cachedVoices=[]; } }
+refreshVoices();
+if(window.speechSynthesis && 'onvoiceschanged' in window.speechSynthesis){ window.speechSynthesis.onvoiceschanged=refreshVoices; }
 function narrText(sim){
   const key = sim.dead?"dead":(sim.dying?"dying":sim.moodKey);
   const arr = NARR[key]||NARR.calm;
@@ -762,8 +774,7 @@ function narrText(sim){
 function speak(text){
   if(!voiceOn) return;
   try{ const u=new SpeechSynthesisUtterance(text); u.lang='zh-CN'; u.rate=0.96; u.pitch=1;
-    const vs=window.speechSynthesis.getVoices();
-    const v=vs.find(x=>/zh|cmn|Chinese/i.test(x.lang+' '+x.name));
+    const v=cachedVoices.find(x=>/zh|cmn|Chinese/i.test(x.lang+' '+x.name));
     if(v)u.voice=v;
     window.speechSynthesis.cancel(); window.speechSynthesis.speak(u);
   }catch(e){}
@@ -803,8 +814,9 @@ if(_hs){ curS=_hs.S; dayPos=_hs.p; }
 setDayPos(dayPos);
 /* 诚实边界：用真实统计数字填充，不写空话 */
 document.getElementById('bReal').innerHTML=[
-  '接线来自公开数据集 <b>MaleCNS v1.0</b>——FlyEM 联盟发布的成年雄性果蝇中枢神经系统连接组。',
-  '本页底图共 <b>'+B.src.nodes+' 个神经元节点、'+B.src.edges+' 条真实突触连接</b>，取自 <b>'+B.src.types+' 种真实神经元类型</b>。',
+  '接线来自公开数据集 <b>MaleCNS v1.0</b>——FlyEM 联盟发布的成年雄性果蝇中枢神经系统连接组（Berg et al., Cell, 2026-09-03）。',
+  '完整的雄性果蝇全中枢连接组覆盖 <b>166,700 个神经元</b>、约 <b>1.25 亿</b>突触、11,710 种细胞类型——这是真实的全脑规模。',
+  '本页底图从中提取并实际点亮其中参与<b>逃逸 / 求偶 / 嗅觉</b>等功能回路的 <b>'+B.src.nodes+' 个神经元节点、'+B.src.edges+' 条真实突触连接</b>（取自 '+B.src.types+' 种类型），是完整连接组的<b>一个功能子集</b>。',
   '大脑图里的节点是<b>真实神经元类型</b>，连线粗细对应<b>真实突触权重</b>（真实突触计数之和）。'
 ].map(s=>'<li>'+s+'</li>').join('');
 document.getElementById('bFake').innerHTML=[
